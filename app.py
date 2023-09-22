@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify,send_file
 import pandas as pd
 import spacy
 from spacy_recognizer import CustomSpacyRecognizer
@@ -7,6 +7,9 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 import warnings
 import os
+import csv
+import io
+from redaction import redactortext
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 warnings.filterwarnings('ignore')
@@ -78,33 +81,47 @@ def health_check():
 
 @app.route('/detect_pii', methods=['POST'])
 def detect_pii():
-    # data = request.json
-    # texts = data.get('texts', [])
-
     texts=request.form.get('inputData')
-    print(type(texts))
-    
     txt=list(texts.split(" "))
-
-
-    results = []
+    analyzed_data = {}
     for text in txt:
         analyze_results = analyze(text=text, language="en")
-        analyzed_data = {
-            "text": text,
-            "findings": [r.to_dict() for r in analyze_results]
-        }
-        results.append(analyzed_data)
+        x = [r.to_dict() for r in analyze_results]
+        if x==[]:
+            continue
+        x = x[0]
+        analyzed_data[text] = x
+    result = redactortext(texts,analyzed_data)
+    return jsonify(result)
 
-    return jsonify(results)
+@app.route('/upload_csv', methods=['POST'])
+def upload_csv():
+    # file = request.files['file']
 
-# @app.route('/anonymize_pii', methods=['POST'])
-# def anonymize_endpoint():
-#     data = request.json
-#     text = data.get('text')
-#     analyze_results = analyze(text=text, language="en")
-#     anonymized_text = anonymize(text, analyze_results)
-#     return jsonify({"anonymized_text": anonymized_text})
+    file_ = request.files['file']
+    Q_data = pd.read_csv(file_, header=None)
+    for  row in Q_data.iterrows():
+        texts = str(row[1])
+        txt=list(texts.split(" "))
+        analyzed_data = {}
+        for text in txt:
+            analyze_results = analyze(text=text, language="en")
+            x = [r.to_dict() for r in analyze_results]
+            if x==[]:
+                continue
+            x = x[0]
+            analyzed_data[text] = x
+        result = redactortext(texts,analyzed_data)
+        # row[2] = result['str']
+        # row[3] = result['map']
+        print(result)
+
+    output_file_path = 'redacted_output.csv'
+    Q_data.to_csv(output_file_path, header=False, index=False)
+    # Return the CSV file to the client
+    return send_file(output_file_path, as_attachment=True)
+    # return "hello"
+
 
 
 if __name__ == '__main__':
